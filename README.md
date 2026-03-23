@@ -218,16 +218,17 @@ Prevents Claude Code from sending Slack messages on your behalf. An AI assistant
 The deny rules above are a starting point. Consider adding rules for your environment:
 
 ```json
-// Database
-"Bash(psql *)",
-"Bash(mysql *)",
-"Bash(mongosh *)",
-
 // Other sensitive reads
 "Read(**/*.pem)",
 "Read(**/*.key)",
 "Read(**/credentials*)"
 ```
+
+### A note on database commands
+
+Commands like `psql`, `mysql`, `mongosh`, and `sqlite3` can be destructive (`DROP TABLE`, `DELETE FROM`), but Claude Code's deny rules match the command itself — not its arguments. Denying `Bash(psql *)` blocks all usage, including harmless `SELECT` queries needed for analysis.
+
+**Recommendation:** Leave database commands at the default (prompted each time) rather than denying them outright. Review each invocation when prompted — it's the only way to distinguish a read query from a destructive one.
 
 ### How `deny` and `allow` work together
 
