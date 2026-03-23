@@ -13,8 +13,8 @@ Claude Code is powerful — it can run shell commands, read files, and interact 
 ```bash
 git clone https://github.com/okdt/claude-code-setting-hardening.git
 cd claude-code-setting-hardening
-chmod +x setup-hardening.sh
-./setup-hardening.sh
+chmod +x setup-claude-code-env-hardening.sh
+./setup-claude-code-env-hardening.sh
 ```
 
 **Option B: Copy the template**
@@ -152,7 +152,7 @@ For project-specific permissions that should be **more** permissive, use `settin
 
 | File | Description |
 |------|-------------|
-| `setup-hardening.sh` | Interactive script — detects existing settings, backs up before overwriting |
+| `setup-claude-code-env-hardening.sh` | Interactive script — detects existing settings, backs up before overwriting |
 | `settings-template.json` | Copy-paste template for `~/.claude/settings.json` |
 
 ## References
