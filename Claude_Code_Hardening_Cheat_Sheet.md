@@ -49,6 +49,37 @@ Run `/sandbox` in Claude Code's interactive mode. This opens a menu where you ca
 | `autoAllowBashIfSandboxed` | Reduces permission prompts for Bash commands — safe because the sandbox constrains their scope. |
 | `denyRead` | Blocks access to credential stores even within the sandbox. SSH keys, GPG keys, AWS credentials, and GCP configs should never be read directly by an AI assistant. Note: this can be bypassed if the path is passed as an argument to a Bash command (e.g., `cat ~/.ssh/id_rsa`) — which is why the sandbox and deny rules are complementary layers. |
 
+### Sandbox makes most deny entries redundant
+
+You may encounter community deny lists with 100+ entries covering `rm -rf /*`, `dd if=/dev/zero`, `shutdown`, `sudo passwd`, reverse shells, firewall manipulation, and similar system-level threats. With sandboxing enabled, **the vast majority of these are already blocked at the OS level** — writes outside the project directory fail, network access is restricted, and privilege escalation is impossible.
+
+Deny rules that remain valuable even with sandbox:
+
+| Category | Why sandbox doesn't cover it |
+|----------|------------------------------|
+| Destructive Git operations (`push -f`, `reset --hard`) | Project-internal operations — sandbox doesn't restrict git |
+| `curl \| sh`, pipe-to-shell patterns | If the download domain is allowed, sandbox permits execution within the project |
+| `export PATH=*`, `LD_PRELOAD=*` | Can alter behavior of subsequent commands within the sandbox |
+| Package publishing (`npm publish`, `docker push`) | Outbound to allowed registries |
+| Infrastructure commands (`terraform`, `kubectl`) | Uses allowed API endpoints |
+
+**Rule of thumb:** If a command targets resources outside the project directory or requires network/root access, the sandbox already handles it. Focus your deny rules on **project-internal destructive actions** and **commands that operate within allowed boundaries**.
+
+### Shell history: protect the file, not the command
+
+Claude Code's Bash tool spawns a **fresh shell process for each command**. Shell state does not persist between invocations, so the `history` builtin returns nothing useful. Deny rules targeting `history | grep password` are ineffective in Claude Code — there is no history to grep.
+
+However, your **shell history files** (`~/.bash_history`, `~/.zsh_history`) exist on disk and may contain passwords, tokens, or sensitive commands from your own terminal sessions. Protect these via `denyRead`:
+
+```json
+"sandbox": {
+  "filesystem": {
+    "denyRead": ["~/.ssh", "~/.gnupg", "~/.aws", "~/.config/gcloud",
+                  "~/.bash_history", "~/.zsh_history"]
+  }
+}
+```
+
 ---
 
 ## 3. Permission System
