@@ -133,9 +133,31 @@ This template is a starting point. Consider adding rules for your environment:
 "Read(**/credentials*)"
 ```
 
-### When to use `allow` instead
+### How `deny` and `allow` work together
 
-For project-specific permissions that should be **more** permissive, use `settings.local.json` (not committed to git) or project-level `.claude/settings.json`:
+Claude Code's permission model has three levels:
+
+| Permission | Behavior | Where to set |
+|------------|----------|--------------|
+| `allow` | Always permitted, no prompt | `settings.json` or `settings.local.json` |
+| _(default)_ | User is prompted each time | — |
+| `deny` | Always blocked, no prompt | `settings.json` |
+
+`deny` takes precedence over `allow`. If the same rule appears in both, it is denied.
+
+**`deny` is for guardrails** — things that should never happen regardless of context (destructive ops, credential access, sending messages).
+
+**`allow` is for convenience** — things you trust and don't want to be prompted for every time.
+
+### Where to put `allow` rules
+
+| File | Scope | Git |
+|------|-------|-----|
+| `~/.claude/settings.json` | All projects on this machine | N/A |
+| `.claude/settings.json` | This project, all contributors | Committed |
+| `.claude/settings.local.json` | This project, only you | Gitignored |
+
+For project-specific allows, use `.claude/settings.local.json` to avoid pushing your personal preferences to teammates:
 
 ```json
 {
@@ -147,6 +169,8 @@ For project-specific permissions that should be **more** permissive, use `settin
   }
 }
 ```
+
+See [`settings-allow-examples.jsonc`](settings-allow-examples.jsonc) for more examples organized by category.
 
 ## Files
 
