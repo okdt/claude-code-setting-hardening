@@ -2,15 +2,21 @@
 # ============================================================
 # Claude Code Setting Hardening
 # ============================================================
-# Apply security-focused settings to ~/.claude/settings.json:
+# Apply security settings to ~/.claude/settings.json:
 #   - Enable sandbox (filesystem & network isolation)
-#   - Deny dangerous operations (destructive git, remote access, etc.)
+#   - Deny destructive operations (git, file deletion, permissions)
+#   - Deny privilege escalation and remote code execution
+#   - Deny macOS commands that look harmless but aren't (open, osascript)
 #   - Restrict reading sensitive files (.env, credentials)
-#   - Restrict MCP actions (e.g., Slack message sending)
+#
+# This script protects your local environment from hallucination,
+# runaway behavior, and malicious prompts. For additional rules
+# (remote access, publishing, deployment, MCP, etc.),
+# see settings-example.jsonc.
 #
 # Usage:
-#   chmod +x setup-hardening.sh
-#   ./setup-hardening.sh
+#   chmod +x hardening-claude-code-env.sh
+#   ./hardening-claude-code-env.sh
 #
 # See README.md for the rationale behind each rule.
 #
@@ -22,6 +28,15 @@
 set -euo pipefail
 
 SETTINGS_FILE="$HOME/.claude/settings.json"
+
+# Note: The deny list below is a sample of destructive operations
+# that the author (okdt) wanted to block first. It is not exhaustive.
+# After running this script, review settings-example.jsonc and
+# adjust ~/.claude/settings.json to fit your own environment.
+#
+# Platform notes:
+#   Sandbox — macOS (Seatbelt), Linux/WSL2 (bubblewrap). WSL1 not supported.
+#   open, osascript, defaults write — macOS-specific commands (remove on Linux)
 
 DESIRED_SETTINGS='{
   "sandbox": {
@@ -40,18 +55,25 @@ DESIRED_SETTINGS='{
       "Bash(git clean -f *)",
       "Bash(git add .)",
       "Bash(git add -A)",
+      "Bash(rm -rf *)",
+      "Bash(rm -r *)",
+      "Bash(chmod 777 *)",
+      "Bash(chmod -R *)",
+      "Bash(chown -R *)",
+      "Bash(killall *)",
+      "Bash(pkill *)",
+      "Bash(kill -9 *)",
+      "Bash(sudo *)",
+      "Bash(curl *|*sh)",
+      "Bash(wget *|*sh)",
       "Bash(ssh *)",
       "Bash(scp *)",
       "Bash(rsync *)",
-      "Bash(npm publish *)",
-      "Bash(yarn publish *)",
-      "Bash(pnpm publish *)",
-      "Bash(*deploy*)",
-      "Bash(terraform apply *)",
+      "Bash(open *)",
+      "Bash(osascript *)",
+      "Bash(defaults write *)",
       "Read(**/.env)",
-      "Read(**/.env.*)",
-      "mcp__claude_ai_Slack__slack_send_message",
-      "mcp__claude_ai_Slack__slack_schedule_message"
+      "Read(**/.env.*)"
     ]
   }
 }'

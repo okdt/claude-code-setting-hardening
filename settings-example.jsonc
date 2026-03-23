@@ -1,6 +1,7 @@
-// Claude Code Setting Hardening Template
-// Copy to ~/.claude/settings.json (remove comments or rename to .json)
+// Claude Code Setting Hardening Example
+// Customize and copy to ~/.claude/settings.json (remove comments)
 // See README.md for the rationale behind each rule.
+// Sandbox: macOS (Seatbelt), Linux/WSL2 (bubblewrap). WSL1 not supported.
 {
   "sandbox": {
     "enabled": true,
@@ -49,6 +50,29 @@
       "Bash(git clean -f *)",
       "Bash(git add .)",
       "Bash(git add -A)",
+
+      // Destructive file operations
+      "Bash(rm -rf *)",
+      "Bash(rm -r *)",
+
+      // Dangerous system operations
+      "Bash(chmod 777 *)",
+      "Bash(chmod -R *)",
+      "Bash(chown -R *)",
+      "Bash(killall *)",
+      "Bash(pkill *)",
+      "Bash(kill -9 *)",
+      // Privilege escalation
+      "Bash(sudo *)",
+
+      // Remote code execution via pipe
+      "Bash(curl *|*sh)",
+      "Bash(wget *|*sh)",
+
+      // macOS only — remove these if you're on Linux/Windows
+      "Bash(open *)",
+      "Bash(osascript *)",
+      "Bash(defaults write *)",
 
       // Remote access
       "Bash(ssh *)",

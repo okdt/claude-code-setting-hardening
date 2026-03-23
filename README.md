@@ -2,7 +2,7 @@
 
 **[日本語版はこちら (Japanese)](README.ja.md)**
 
-A minimal, opinionated security hardening template for [Claude Code](https://code.claude.com/) `~/.claude/settings.json`.
+A security hardening cheatsheet for [Claude Code](https://code.claude.com/) `~/.claude/settings.json`.
 
 Claude Code is powerful — it can run shell commands, read files, and interact with external services. These settings restrict what it's **not allowed** to do, so you can focus on what it **should** do.
 
@@ -17,11 +17,11 @@ chmod +x hardening-claude-code-env.sh
 ./hardening-claude-code-env.sh
 ```
 
-**Option B: Copy the template**
+**Option B: Copy the example**
 
 ```bash
 # Remove comments and copy
-grep -v '^\s*//' settings-template.jsonc > ~/.claude/settings.json
+grep -v '^\s*//' settings-example.jsonc > ~/.claude/settings.json
 ```
 
 > If you already have a `settings.json`, merge the rules manually to preserve your existing configuration.
@@ -42,7 +42,7 @@ grep -v '^\s*//' settings-template.jsonc > ~/.claude/settings.json
 
 | Setting | Why |
 |---------|-----|
-| `enabled: true` | Isolates file and network access at the OS level. Claude Code can only access the current working directory and explicitly allowed paths. |
+| `enabled: true` | Isolates file and network access at the OS level. Claude Code can only access the current working directory and explicitly allowed paths. Supported on macOS (Seatbelt), Linux, and WSL2 (bubblewrap). |
 | `autoAllowBashIfSandboxed` | Reduces permission prompts for Bash commands — safe because the sandbox constrains their scope. |
 | `denyRead` | Blocks access to credential stores even within the sandbox. SSH keys, GPG keys, AWS credentials, and GCP configs should never be read by an AI assistant. |
 
@@ -65,6 +65,69 @@ grep -v '^\s*//' settings-template.jsonc > ~/.claude/settings.json
 | `git checkout .` | Silently reverts all working tree changes. |
 | `git clean -f` | Deletes untracked files permanently. |
 | `git add . / -A` | Stages everything — may accidentally include `.env`, credentials, or large binaries. |
+
+### Deny List — Destructive File Operations
+
+```json
+"Bash(rm -rf *)",
+"Bash(rm -r *)"
+```
+
+| Rule | Risk |
+|------|------|
+| `rm -rf` | Recursively deletes directories without confirmation. A wrong path can wipe out entire project trees. |
+| `rm -r` | Same as above, but prompts in some configurations. Still too dangerous to allow unconditionally. |
+
+### Deny List — Dangerous System Operations
+
+```json
+"Bash(chmod 777 *)",
+"Bash(chmod -R *)",
+"Bash(chown -R *)",
+"Bash(killall *)",
+"Bash(pkill *)",
+"Bash(kill -9 *)",
+```
+
+| Rule | Risk |
+|------|------|
+| `chmod 777` | Makes files world-readable/writable/executable. A common security anti-pattern. |
+| `chmod -R / chown -R` | Recursive permission/ownership changes can break system directories or expose sensitive files. |
+| `killall / pkill` | Terminates processes by name. Can kill unrelated critical processes. |
+| `kill -9` | Force-kills without cleanup. Can cause data corruption in running applications. |
+
+### Deny List — Privilege Escalation
+
+```json
+"Bash(sudo *)"
+```
+
+An AI assistant should never escalate privileges. Even though `sudo` requires a password, denying it outright prevents Claude Code from even attempting to run commands as root.
+
+### Deny List — Remote Code Execution via Pipe
+
+```json
+"Bash(curl *|*sh)",
+"Bash(wget *|*sh)"
+```
+
+Piping remote scripts directly into a shell (`curl ... | sh`) is a classic supply chain attack vector. Claude Code may suggest this as a standard "install" step — and users tend to approve it reflexively because it *looks like* a normal installation procedure.
+
+### Deny List — macOS: Easy to Approve, Hard to Undo
+
+These are commands that **look harmless** in context, so users tend to approve them without a second thought. That's exactly what makes them risky.
+
+```json
+"Bash(open *)",
+"Bash(osascript *)",
+"Bash(defaults write *)"
+```
+
+| Rule | Why it's easy to approve | Actual risk |
+|------|-------------------------|-------------|
+| `open` | "Just opening a file/URL" | Can launch arbitrary applications, open phishing URLs, or execute downloaded files. MCP browser tools (Puppeteer, etc.) do **not** use `open`, so browser automation is unaffected. |
+| `osascript` | "Just automating Finder" | AppleScript can send emails, control apps, access keychain, and much more. |
+| `defaults write` | "Just changing a setting" | Can modify security-critical macOS preferences, disable Gatekeeper, or alter app behavior. |
 
 ### Deny List — Remote Access
 
@@ -115,7 +178,7 @@ Prevents Claude Code from sending Slack messages on your behalf. An AI assistant
 
 ## Customizing
 
-This template is a starting point. Consider adding rules for your environment:
+The deny rules above are a starting point. Consider adding rules for your environment:
 
 ```json
 // CI/CD tools
@@ -171,14 +234,14 @@ For project-specific allows, use `.claude/settings.local.json` to avoid pushing 
 }
 ```
 
-See the commented-out `allow` section in [`settings-template.jsonc`](settings-template.jsonc) for examples.
+See the commented-out `allow` section in [`settings-example.jsonc`](settings-example.jsonc) for examples.
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `hardening-claude-code-env.sh` | Interactive script — detects existing settings, backs up before overwriting |
-| `settings-template.jsonc` | Template for `~/.claude/settings.json` — deny rules active, allow rules commented out |
+| `hardening-claude-code-env.sh` | Interactive script — applies local protection rules (sandbox + deny). Detects existing settings, backs up before overwriting |
+| `settings-example.jsonc` | Full example for `~/.claude/settings.json` — includes everything the script applies, plus additional rules (remote access, publishing, deployment, MCP) and commented-out allow examples |
 
 ## References
 
