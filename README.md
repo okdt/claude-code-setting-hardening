@@ -1,4 +1,4 @@
-# claude-code-setting-hardening
+# claude-code-hardening-cheatsheet
 
 **[日本語版はこちら (Japanese)](README.ja.md)**
 
@@ -11,8 +11,8 @@ Claude Code is powerful — it can run shell commands, read files, and interact 
 **Option A: Run the script**
 
 ```bash
-git clone https://github.com/okdt/claude-code-setting-hardening.git
-cd claude-code-setting-hardening
+git clone https://github.com/okdt/claude-code-hardening-cheatsheet.git
+cd claude-code-hardening-cheatsheet
 chmod +x hardening-claude-code-env.sh
 ./hardening-claude-code-env.sh
 ```
