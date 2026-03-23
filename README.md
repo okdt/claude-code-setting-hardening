@@ -164,4 +164,4 @@ For project-specific permissions that should be **more** permissive, use `settin
 
 ## License
 
-MIT
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) — Free to use, share, and adapt with attribution.
