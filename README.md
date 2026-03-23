@@ -20,7 +20,8 @@ chmod +x hardening-claude-code-env.sh
 **Option B: Copy the template**
 
 ```bash
-cp settings-template.json ~/.claude/settings.json
+# Remove comments and copy
+grep -v '^\s*//' settings-template.jsonc > ~/.claude/settings.json
 ```
 
 > If you already have a `settings.json`, merge the rules manually to preserve your existing configuration.
@@ -170,15 +171,14 @@ For project-specific allows, use `.claude/settings.local.json` to avoid pushing 
 }
 ```
 
-See [`settings-allow-examples.jsonc`](settings-allow-examples.jsonc) for more examples organized by category.
+See the commented-out `allow` section in [`settings-template.jsonc`](settings-template.jsonc) for examples.
 
 ## Files
 
 | File | Description |
 |------|-------------|
 | `hardening-claude-code-env.sh` | Interactive script — detects existing settings, backs up before overwriting |
-| `settings-template.json` | Copy-paste template for `~/.claude/settings.json` (deny rules) |
-| `settings-allow-examples.jsonc` | Allow rule examples — pick what fits your workflow (JSONC with comments) |
+| `settings-template.jsonc` | Template for `~/.claude/settings.json` — deny rules active, allow rules commented out |
 
 ## References
 

@@ -1,0 +1,76 @@
+// Claude Code Setting Hardening Template
+// Copy to ~/.claude/settings.json (remove comments or rename to .json)
+// See README.md for the rationale behind each rule.
+{
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "filesystem": {
+      "denyRead": ["~/.ssh", "~/.gnupg", "~/.aws", "~/.config/gcloud"]
+    }
+  },
+  "permissions": {
+    // ── allow: skip permission prompts for trusted operations ──
+    // Uncomment the rules you need. These are examples.
+    // "allow": [
+    //   // Test & Build
+    //   "Bash(npm test *)",
+    //   "Bash(npm run build *)",
+    //   "Bash(npm run lint *)",
+    //   "Bash(pytest *)",
+    //   "Bash(go test *)",
+    //   "Bash(cargo test *)",
+    //   "Bash(make *)",
+    //
+    //   // Git (safe read-only operations)
+    //   "Bash(git status *)",
+    //   "Bash(git log *)",
+    //   "Bash(git diff *)",
+    //   "Bash(git branch *)",
+    //
+    //   // MCP read-only (allow reading, deny sending)
+    //   "mcp__claude_ai_Slack__slack_list_channels",
+    //   "mcp__claude_ai_Slack__slack_get_channel_history",
+    //   "mcp__claude_ai_Slack__slack_get_thread_replies",
+    //   "mcp__claude_ai_Slack__slack_get_users",
+    //   "mcp__claude_ai_Slack__slack_search_messages",
+    //   "mcp__claude_ai_Google_Calendar__gcal_list_events",
+    //   "mcp__claude_ai_Google_Calendar__gcal_list_calendars",
+    //   "mcp__claude_ai_Google_Calendar__gcal_get_event"
+    // ],
+
+    // ── deny: always block, regardless of context ──
+    "deny": [
+      // Destructive git operations
+      "Bash(git push -f *)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)",
+      "Bash(git checkout .)",
+      "Bash(git clean -f *)",
+      "Bash(git add .)",
+      "Bash(git add -A)",
+
+      // Remote access
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(rsync *)",
+
+      // Package publishing & deployment
+      "Bash(npm publish *)",
+      "Bash(yarn publish *)",
+      "Bash(pnpm publish *)",
+      "Bash(*deploy*)",
+
+      // Infrastructure
+      "Bash(terraform apply *)",
+
+      // Sensitive file access
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+
+      // MCP actions (sending)
+      "mcp__claude_ai_Slack__slack_send_message",
+      "mcp__claude_ai_Slack__slack_schedule_message"
+    ]
+  }
+}

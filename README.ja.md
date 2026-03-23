@@ -20,7 +20,8 @@ chmod +x hardening-claude-code-env.sh
 **方法B: テンプレートをコピー**
 
 ```bash
-cp settings-template.json ~/.claude/settings.json
+# コメントを除去してコピー
+grep -v '^\s*//' settings-template.jsonc > ~/.claude/settings.json
 ```
 
 > 既に `settings.json` がある場合は、既存の設定を残すために手動でマージしてください。
@@ -170,15 +171,14 @@ Claude Code のパーミッションモデルには3段階あります：
 }
 ```
 
-カテゴリ別の例は [`settings-allow-examples.jsonc`](settings-allow-examples.jsonc) を参照してください。
+[`settings-template.jsonc`](settings-template.jsonc) のコメントアウトされた `allow` セクションに例があります。
 
 ## ファイル構成
 
 | ファイル | 説明 |
 |---------|------|
 | `hardening-claude-code-env.sh` | 対話型スクリプト — 既存設定を検出し、上書き前にバックアップを作成 |
-| `settings-template.json` | `~/.claude/settings.json` にコピーして使うテンプレート（deny ルール） |
-| `settings-allow-examples.jsonc` | allow ルールの例集 — 環境に合わせて選択（コメント付き JSONC） |
+| `settings-template.jsonc` | `~/.claude/settings.json` のテンプレート — deny ルールは有効、allow ルールはコメントアウト |
 
 ## 参考資料
 
