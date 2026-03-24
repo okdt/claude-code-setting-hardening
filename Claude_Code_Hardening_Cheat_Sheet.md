@@ -180,6 +180,10 @@ Prevent Claude Code from initiating connections to remote hosts.
 
 An AI assistant should not initiate remote connections. These commands can transfer files or execute commands on remote hosts. If you need Claude Code to work with remote systems, consider allowing specific targets instead of a blanket allow.
 
+Note: With sandboxing enabled, network access is already blocked at the OS level, so these commands would fail even without deny rules. However, deny rules prevent Claude Code from **attempting** the command in the first place — avoiding unnecessary errors and wasted turns.
+
+When a deny rule blocks a command, the block is visible within the session but **is not logged to a file by default**. To maintain an audit trail of denied operations, configure [OpenTelemetry](https://code.claude.com/docs/en/monitoring-usage) — the `claude_code.tool_decision` event records whether each tool call was accepted or rejected, along with the decision source.
+
 ### 4.7 Deny — macOS: Easy to Approve, Hard to Undo
 
 Some macOS commands look harmless but can cause serious damage. Users tend to approve these without a second thought — that's exactly what makes them risky.
