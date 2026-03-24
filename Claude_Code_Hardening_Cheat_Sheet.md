@@ -182,7 +182,7 @@ An AI assistant should not initiate remote connections. These commands can trans
 
 Note: With sandboxing enabled, network access is already blocked at the OS level, so these commands would fail even without deny rules. However, deny rules prevent Claude Code from **attempting** the command in the first place — avoiding unnecessary errors and wasted turns.
 
-When a deny rule blocks a command, the block is visible within the session but **is not logged to a file by default**. To maintain an audit trail of denied operations, configure [OpenTelemetry](https://code.claude.com/docs/en/monitoring-usage) — the `claude_code.tool_decision` event records whether each tool call was accepted or rejected, along with the decision source.
+When a deny rule blocks a command, the block is visible within the session but is not logged to a file by default. See "[6. Logging Denied Operations](#6-logging-denied-operations)" for how to maintain an audit trail.
 
 ### 4.7 Deny — macOS: Easy to Approve, Hard to Undo
 
@@ -471,6 +471,94 @@ For robust protection, use all three layers together:
 Deny rules catch the obvious cases. Sandbox prevents damage even if a command slips through. Hooks let you add custom logic for your specific environment.
 
 For more on hooks, see [Claude Code Hooks Guide](https://code.claude.com/docs/en/hooks-guide).
+
+---
+
+## 6. Logging Denied Operations
+
+Deny rule blocks are visible in the session UI, but are not logged to a file by default. To maintain an audit trail of what was blocked and when, you have two options.
+
+### Option 1: Log tool calls with a Hook
+
+The simplest approach — no external services required. Use a PreToolUse Hook to write every tool call to a local log file.
+
+**Important limitation:** Hooks only see tool calls that **reach** the hook. Calls blocked by deny rules are rejected before hooks run, so **deny-rule blocks cannot be captured this way**. For that, you need Option 2.
+
+**Hook script** — save as `~/.claude/hooks/log-tool-calls.sh`:
+
+```bash
+#!/bin/bash
+INPUT=$(cat)
+TOOL=$(echo "$INPUT" | jq -r '.tool_name')
+CMD=$(echo "$INPUT" | jq -r '.tool_input.command // .tool_input.file_path // "N/A"')
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+SESSION_ID="${CLAUDE_SESSION_ID:-unknown}"
+
+echo "${TIMESTAMP} session=${SESSION_ID} tool=${TOOL} command=${CMD}" >> ~/.claude/tool-calls.log
+
+exit 0
+```
+
+```bash
+chmod +x ~/.claude/hooks/log-tool-calls.sh
+```
+
+**Configuration:**
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/log-tool-calls.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Setting `matcher` to an empty string matches all tool calls.
+
+### Option 2: Collect telemetry with OpenTelemetry
+
+For a complete audit trail — including deny-rule blocks — configure OpenTelemetry (OTel). Claude Code exports span events for every tool call decision.
+
+**Recorded event:**
+
+| Event name | Content |
+|-----------|---------|
+| `claude_code.tool_decision` | Accept/reject decision for each tool call, along with the decision source (deny rule, user rejection, etc.) |
+
+**Setup:**
+
+1. Prepare an OTel Collector or backend (Jaeger, Honeycomb, Datadog, etc.)
+2. Set the endpoint via environment variable:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+```
+
+3. Launch Claude Code — telemetry data will be exported automatically
+
+See [Monitoring Usage](https://code.claude.com/docs/en/monitoring-usage) for details.
+
+### Which to choose
+
+| Consideration | Hook log | OpenTelemetry |
+|--------------|----------|---------------|
+| Records deny-rule blocks | **No** (hooks are not reached) | Yes |
+| Records allowed calls | Yes | Yes |
+| Setup effort | Single file | Requires OTel backend |
+| Structured / searchable | Low (text log) | High (spans/events) |
+| Team / org audit | Individual use | Well suited |
+
+Use **Hook logging** if you just want visibility into what tool calls are being made during development. Use **OpenTelemetry** if you need a complete audit trail including deny-rule blocks.
 
 ---
 

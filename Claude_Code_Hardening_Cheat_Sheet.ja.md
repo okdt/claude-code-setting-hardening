@@ -181,7 +181,7 @@ AIアシスタントにリモート接続を許可すべきではありません
 
 注：サンドボックスが有効な場合、ネットワークアクセスは OS レベルで既にブロックされるため、deny ルールがなくてもこれらのコマンドは失敗します。しかし deny ルールがあれば、Claude Code がコマンドの**実行を試みること自体**を防げます — 不要なエラーやターンの浪費を避けられます。
 
-deny ルールでブロックされた操作はセッション中に表示されますが、**デフォルトではファイルにログとして記録されません**。拒否操作の監査証跡を残すには [OpenTelemetry](https://code.claude.com/docs/ja/monitoring-usage) を設定してください。`claude_code.tool_decision` イベントで各ツール呼び出しの承認・拒否とその判断元が記録されます。
+deny ルールでブロックされた操作はセッション中に表示されますが、デフォルトではファイルにログとして記録されません。監査証跡を残す方法は「[6. 拒否ログを残す方法](#6-拒否ログを残す方法)」で解説します。
 
 ### 4.7 Deny — macOS: つい許可しがちだが取り返しがつかないもの
 
@@ -470,6 +470,94 @@ Bash の deny ルールは glob パターンマッチングを使うため、本
 Deny ルールは明白なケースを捕捉します。サンドボックスはコマンドがすり抜けても被害を防ぎます。Hooks は環境固有のカスタムロジックを追加できます。
 
 Hooks の詳細は [hooks でワークフローを自動化する](https://code.claude.com/docs/ja/hooks-guide)を参照してください。
+
+---
+
+## 6. 拒否ログを残す方法
+
+deny ルールでブロックされた操作はセッション中の画面には表示されますが、デフォルトではファイルにログとして記録されません。「何がいつブロックされたか」の監査証跡を残すには、以下の方法があります。
+
+### 方法1: Hook でログファイルに書き出す
+
+外部サービスなしで今すぐ始められる方法です。PreToolUse Hook を使い、ツール呼び出しをローカルファイルに記録します。
+
+ただし、**Hook が記録できるのは Hook が呼ばれたツール呼び出しだけ**です。deny ルールでブロックされた呼び出しは Hook に到達する前に却下されるため、Hook では記録できません。deny ルール自体の拒否ログを残すには方法2の OpenTelemetry が必要です。
+
+**Hook スクリプト** — `~/.claude/hooks/log-tool-calls.sh` として保存：
+
+```bash
+#!/bin/bash
+INPUT=$(cat)
+TOOL=$(echo "$INPUT" | jq -r '.tool_name')
+CMD=$(echo "$INPUT" | jq -r '.tool_input.command // .tool_input.file_path // "N/A"')
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+SESSION_ID="${CLAUDE_SESSION_ID:-unknown}"
+
+echo "${TIMESTAMP} session=${SESSION_ID} tool=${TOOL} command=${CMD}" >> ~/.claude/tool-calls.log
+
+exit 0
+```
+
+```bash
+chmod +x ~/.claude/hooks/log-tool-calls.sh
+```
+
+**設定:**
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/log-tool-calls.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`matcher` を空文字列にすると、すべてのツール呼び出しにマッチします。
+
+### 方法2: OpenTelemetry でテレメトリを収集する
+
+deny ルールによる拒否まで含めた完全な監査証跡が必要な場合は、OpenTelemetry（OTel）を設定してください。Claude Code は OTel に対応しており、各ツール呼び出しの承認・拒否とその判断元をスパンイベントとして出力します。
+
+**記録されるイベント:**
+
+| イベント名 | 内容 |
+|-----------|------|
+| `claude_code.tool_decision` | ツール呼び出しごとの許可/拒否の判定結果と、判定の根拠（deny ルール、ユーザー拒否など） |
+
+**設定手順:**
+
+1. OTel Collector またはバックエンド（Jaeger、Honeycomb、Datadog など）を用意する
+2. 環境変数でエンドポイントを指定する：
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+```
+
+3. Claude Code を起動すると、テレメトリデータがエクスポートされる
+
+詳細は [使用状況の監視](https://code.claude.com/docs/ja/monitoring-usage) を参照してください。
+
+### どちらを選ぶか
+
+| 観点 | Hook ログ | OpenTelemetry |
+|------|-----------|--------------|
+| deny ルールの拒否を記録 | **できない**（Hook に到達しない） | できる |
+| 許可された呼び出しも記録 | できる | できる |
+| セットアップの手軽さ | ファイル1つで済む | OTel バックエンドが必要 |
+| 構造化・検索性 | 低い（テキストログ） | 高い（スパン/イベント） |
+| チーム・組織での監査 | 個人用途向き | 向いている |
+
+開発中にどんなツール呼び出しが行われたかを把握したいなら **Hook ログ** で十分です。deny ルールの拒否まで含めた完全な監査証跡が必要なら **OpenTelemetry** を設定してください。
 
 ---
 
