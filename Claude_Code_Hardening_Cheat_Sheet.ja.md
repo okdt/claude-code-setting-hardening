@@ -450,6 +450,67 @@ exit 0
 }
 ```
 
+### 活用例3: main/master ブランチへの push をブロック
+
+**課題:** `git push` は便利なので `ask` にしているが、うっかり承認すると main に直接 push できてしまう。deny ルールの `Bash(git push *)` ではブランチを区別できない。
+
+**Hook スクリプト** — `~/.claude/hooks/block-push-to-main.sh` として保存：
+
+```bash
+#!/bin/bash
+INPUT=$(cat)
+CMD=$(echo "$INPUT" | jq -r '.tool_input.command')
+
+# git push コマンドでなければスキップ
+echo "$CMD" | grep -qE '^\s*git\s+push' || exit 0
+
+# 明示的に main/master が指定されている場合
+if echo "$CMD" | grep -qE '\b(main|master)\b'; then
+  echo "Blocked: push to main/master is not allowed: $CMD" >&2
+  exit 2
+fi
+
+# 引数なし or リモート名のみの push → 現在のブランチを確認
+if echo "$CMD" | grep -qE '^\s*git\s+push\s*$' || \
+   echo "$CMD" | grep -qE '^\s*git\s+push\s+(-[a-zA-Z]+\s+)*[a-zA-Z0-9_.-]+\s*$'; then
+  CURRENT=$(git branch --show-current 2>/dev/null)
+  if [ "$CURRENT" = "main" ] || [ "$CURRENT" = "master" ]; then
+    echo "Blocked: currently on $CURRENT — push to main/master is not allowed" >&2
+    exit 2
+  fi
+fi
+
+exit 0
+```
+
+```bash
+chmod +x ~/.claude/hooks/block-push-to-main.sh
+```
+
+**設定** — `settings.json` に追加：
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/block-push-to-main.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+これで `git push origin main` や引数なしの `git push`（現在のブランチが main の場合）をブロックします。作業用ブランチへの push はそのまま通ります。
+
+> **Note:** `feature/main-cleanup` のようにブランチ名に "main" や "master" という文字列を含むケースにもマッチしてしまうので、気をつけてください。
+
 ### 複数の Hook を組み合わせる
 
 同じイベントに複数の Hook スクリプトを登録できます。すべて実行され、どれか1つでも終了コード 2 を返せば呼び出しはブロックされます：
@@ -468,6 +529,10 @@ exit 0
           {
             "type": "command",
             "command": "~/.claude/hooks/block-sensitive-reads.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/block-push-to-main.sh"
           }
         ]
       }
