@@ -4,9 +4,9 @@
 
 ## 1. Introduction
 
-Claude Code can run shell commands, read and write files, and interact with external services on your behalf. This power comes with risk. This cheatsheet provides a practical guide to hardening your Claude Code environment through `~/.claude/settings.json` — applying the principle of least privilege and Human-in-the-Loop (HITL) controls.
+Claude Code can run shell commands, read and write files, and interact with external services on your behalf. This power comes with risk. This document is about controlling that risk. If you're a beginner, start with the "Sandboxing" section at minimum. If you're a technical lead, use this as a reference for establishing your team's baseline security policy.
 
-### Risks — Why Hardening Is Needed
+### Risks — Why Hardening (Security Hardening) Is Needed
 
 - **Well-intentioned overreach** — Claude Code may take actions that are technically correct but go beyond what you intended: deleting files to "clean up," force-pushing to "fix" a branch, or installing packages you didn't ask for. ([OWASP LLM09: Overreliance](https://genai.owasp.org/llm-top-10/))
 - **Excessive permissions** — By default, Claude Code can do anything your user account can do. Without deny rules, a single "yes" can grant access to destructive commands, credential files, or remote systems. ([OWASP LLM06: Excessive Agency](https://genai.owasp.org/llm-top-10/))
@@ -14,12 +14,22 @@ Claude Code can run shell commands, read and write files, and interact with exte
 - **Compromised environment** — If your machine is affected by RCE, malware, or a supply chain attack, Claude Code inherits that compromise. Hardening limits the blast radius — what an attacker can do *through* Claude Code even after gaining a foothold.
 
 These are not hypothetical. They are the reason guardrails exist: to ensure that when things go wrong — and they will — the damage is contained.
+This cheatsheet provides a practical guide to hardening your Claude Code environment through `~/.claude/settings.json` — applying the principle of least privilege and Human-in-the-Loop (HITL) controls.
 
-### About This Document
+### Approach
 
-It covers what to block, what to allow, what to always ask about, and what to do when deny rules aren't enough. The deny list examples are a sample of operations that the author ([okdt](https://github.com/okdt)) wanted to block first. They are not exhaustive. Use them as a starting point and customize for your own environment.
+1. **Sandboxing** — OS-level process isolation that restricts Claude Code's (and its child processes') file and network access. This operates at the kernel level, so the AI cannot circumvent it. The most fundamental and strongest defense layer.
+2. **Permissions (allow/deny/ask/default)** — Rules that control what happens when a tool (Bash command, file edit, etc.) is invoked from Claude Code's console: "always allow / always ask / always deny / default (not configured)." Permissions provide fine-grained access control per tool invocation. Using `ask` enables Human-in-the-Loop — systematic visual review.
+3. **Hooks (hooks + PreToolUse)** — A mechanism to automatically run shell scripts before and after tool invocations. Lets you inject fine-grained pattern matching and environment-specific custom checks that permissions' allow/deny alone can't handle.
+4. **Logging** — This may be needed in enterprise environments, or for debugging this hardening setup itself. We touch on it briefly.
 
-This cheatsheet is primarily written and tested on macOS, but most rules apply equally to Linux and Windows (WSL). Platform-specific rules are marked as such.
+### About the examples
+
+Deny rules catch obvious cases. The sandbox prevents damage even when commands slip through. Hooks add environment-specific custom logic.
+
+This document covers what to block, what to allow, what to always ask about, and what to do when deny rules aren't enough. The deny list examples here are samples, not a complete list. They start from the perspective of what risks to suppress. This cheatsheet is primarily written and tested on macOS, but should be useful for Linux and Windows (WSL) as well.
+
+Customize for your own environment and risk profile.
 
 ---
 
@@ -31,14 +41,18 @@ Supported on macOS (Seatbelt), Linux, and WSL2 (bubblewrap). WSL1 is not support
 
 ### How to enable
 
-Run `/sandbox` in Claude Code's interactive mode. This opens a menu where you can enable sandboxing and configure its mode. The equivalent `settings.json` configuration is:
+- Run `/sandbox` in Claude Code's interactive mode. This opens a menu where you can enable sandboxing and configure its mode.
+
+- Doing this manually each time is tedious and error-prone, so configure it in settings instead.
+
+`settings.json` configuration:
 
 ```json
 "sandbox": {
   "enabled": true,
   "autoAllowBashIfSandboxed": true,
   "filesystem": {
-    "denyRead": ["~/.ssh", "~/.gnupg", "~/.aws", "~/.config/gcloud", "~/.bash_history", "~/.zsh_history"]
+    "denyRead": ["~/.ssh", "~/.gnupg", "~/.aws", "~/.config/gcloud"]
   }
 }
 ```
@@ -47,30 +61,28 @@ Run `/sandbox` in Claude Code's interactive mode. This opens a menu where you ca
 |---------|-----|
 | `enabled: true` | Isolates file and network access at the OS level. Claude Code can only access the current working directory and explicitly allowed paths. |
 | `autoAllowBashIfSandboxed` | Reduces permission prompts for Bash commands — safe because the sandbox constrains their scope. |
-| `denyRead` | Blocks access to credential stores even within the sandbox. SSH keys, GPG keys, AWS credentials, and GCP configs should never be read directly by an AI assistant. Note: this can be bypassed if the path is passed as an argument to a Bash command (e.g., `cat ~/.ssh/id_rsa`) — which is why the sandbox and deny rules are complementary layers. |
+| `denyRead` | This is a bonus / customization section. Blocks access to credential stores even within the sandbox. In this example, SSH keys, GPG keys, AWS credentials, and GCP configs are configured so the AI assistant cannot read them directly. (However... this can be bypassed if the path is passed as an argument to a Bash command like `cat`, so the implementation is admittedly imperfect.) |
 
 ---
 
 ## 3. Permission System
 
-Claude Code's permission system determines what happens when a command or tool is invoked. Understanding these four levels is essential before configuring any rules.
+Use Claude Code's permission system to control what is allowed when a command or tool is invoked. Understand that there are four levels of rules.
 
 ### Permission levels
 
-| Permission | Behavior | Where to set |
-|------------|----------|--------------|
-| `allow` | Always permitted, no prompt | `settings.json` or `settings.local.json` |
-| `ask` | Always prompted, even if previously approved with "don't ask again" | `settings.json` or `settings.local.json` |
-| _(default)_ | Prompted on first use; "don't ask again" makes it permanent | Your brain — which may say yes too quickly when busy, or can't tell safe from unsafe when tired |
-| `deny` | Always blocked, no prompt | `settings.json` or `settings.local.json` |
+| Permission | Behavior | Purpose |
+|------------|----------|---------|
+| `deny` | Always blocked (no prompt) | Guardrails |
+| `ask` | Always prompted (even if previously approved with "don't ask again") | Human-in-the-Loop — usually trusted, but create a checkpoint for review |
+| `allow` | Always permitted (no prompt) | Convenience — for trusted operations where you want to skip confirmation |
+| _(default / not configured)_ | Prompted on first use; "don't ask again" makes it permanent | The default judgment is in your head — you may say yes too quickly when busy, or can't tell safe from unsafe when unsure. (Everyone occasionally doubts their own reliability.) |
 
-`deny` takes precedence over `allow`. If the same rule appears in both, it is denied.
-
-- **`deny` is for guardrails** — things that should never happen regardless of context.
-- **`allow` is for convenience** — things you trust and don't want to be prompted for every time.
-- **`ask` is your Human-in-the-Loop** — things you usually trust but want to verify each time.
+> **Key insight:** `deny` is for things that should **never** happen. `allow` is for things you **always** trust. `ask` is for things you **usually** trust but want to verify.
 
 ### Where to put rules
+
+These rules can be set under your HOME directory or per project (folder/directory/repository) shared with your team.
 
 | File | Who | Scope | Git |
 |------|-----|-------|-----|
@@ -78,17 +90,13 @@ Claude Code's permission system determines what happens when a command or tool i
 | `<project>/.claude/settings.json` | Entire team | This project only | Committed and shared with everyone |
 | `<project>/.claude/settings.local.json` | You only | This project only | Lives in the repo directory but gitignored — never pushed |
 
-For your personal preferences on a specific project, use `.claude/settings.local.json` so you don't impose them on teammates.
-
-* A `deny` rule in any settings file cannot be overridden by `allow` in another. Conversely, an `allow` can be overridden by `deny` in another settings file.
-
 ---
 
-## 4. Allow / Ask / Deny List
+## 4. Thinking About Rules: Deny / Ask / Allow
 
 This section lists specific rules organized by threat category. Each rule includes the rationale so you can decide whether it applies to your environment.
 
-See [`settings_example.jsonc`](settings_example.jsonc) for a single file containing all rules below, with `allow` and `ask` examples commented out.
+See [`settings_example.jsonc`](settings_example.jsonc) for a single file containing all rules below, with `allow` and `ask` examples and commentary in comments. Note that comments will cause JSON errors if left in place.
 
 ### 4.1 Deny — Destructive Git Operations
 
@@ -155,7 +163,7 @@ Prevent Claude Code from running commands as root.
 "Bash(su *)"
 ```
 
-An AI assistant should never escalate privileges. Even though `sudo` requires a password, denying it outright prevents Claude Code from even attempting to run commands as root. Note: with sandboxing enabled, privilege escalation is already blocked at the OS level, making these rules redundant. They are included here for environments where sandboxing is not used.
+An AI assistant should never escalate privileges. `sudo` requires a password, but it's more reliable to deny the attempt itself.
 
 ### 4.5 Deny — Remote Code Execution via Pipe
 
@@ -170,7 +178,8 @@ Piping remote scripts directly into a shell (`curl ... | sh`) is a classic suppl
 
 ### 4.6 Deny — Remote Access
 
-Prevent Claude Code from initiating connections to remote hosts.
+Prevent Claude Code from initiating connections to remote hosts. An AI assistant should not initiate remote connections. These commands can transfer files or execute commands on remote hosts.
+When sandbox mode is enabled, network access is blocked at the OS level, but Claude Code can still attempt to execute these commands — that's why they're listed here.
 
 ```json
 "Bash(ssh *)",
@@ -178,13 +187,21 @@ Prevent Claude Code from initiating connections to remote hosts.
 "Bash(rsync *)"
 ```
 
-An AI assistant should not initiate remote connections. These commands can transfer files or execute commands on remote hosts. If you need Claude Code to work with remote systems, consider allowing specific targets instead of a blanket allow.
+If you need remote access, consider allowing specific targets instead of a blanket allow.
 
-Note: With sandboxing enabled, network access is already blocked at the OS level, so these commands would fail even without deny rules. However, deny rules prevent Claude Code from **attempting** the command in the first place — avoiding unnecessary errors and wasted turns.
+### 4.7 Deny — Package Publishing & Deployment
 
-When a deny rule blocks a command, the block is visible within the session but is not logged to a file by default. See "[6. Logging Denied Operations](#6-logging-denied-operations)" for how to maintain an audit trail.
+Prevent unintended package publishing and deployment, even in CI/CD contexts.
+Publishing packages or triggering deployments should be a deliberate human action. Unless explicitly designed into your workflow, an AI should not do this autonomously.
 
-### 4.7 Deny — macOS: Easy to Approve, Hard to Undo
+```json
+"Bash(npm publish *)",
+"Bash(yarn publish *)",
+"Bash(pnpm publish *)",
+"Bash(*deploy*)"
+```
+
+### 4.8 Deny — Easy to Approve, Hard to Undo (macOS)
 
 Some macOS commands look harmless but can cause serious damage. Users tend to approve these without a second thought — that's exactly what makes them risky.
 
@@ -201,19 +218,6 @@ Some macOS commands look harmless but can cause serious damage. Users tend to ap
 | `defaults write` | "Just changing a setting" | Can modify security-critical macOS preferences, disable Gatekeeper, or alter app behavior. |
 
 * These rules are not needed on other operating systems, but consider the same approach for your platform's equivalents (contributions welcome).
-
-### 4.8 Deny — Package Publishing & Deployment
-
-Prevent unintended package publishing and deployment, even in CI/CD contexts.
-
-```json
-"Bash(npm publish *)",
-"Bash(yarn publish *)",
-"Bash(pnpm publish *)",
-"Bash(*deploy*)"
-```
-
-Publishing packages or triggering deployments should be a deliberate human action. Unless explicitly designed into your workflow, an AI should not do this autonomously. A single mistaken publish can affect every downstream consumer.
 
 ### 4.9 Deny — Infrastructure
 
@@ -249,7 +253,7 @@ Prevent Claude Code from reading files that contain secrets.
 "Read(**/.env.*)"
 ```
 
-`.env` files typically contain API keys, database passwords, and other secrets. Claude Code doesn't need to read them — it can reference `.env.example` or documentation instead.
+`.env` files typically contain API keys, database passwords, and other secrets.
 
 Consider adding more patterns for your environment:
 
@@ -261,20 +265,20 @@ Consider adding more patterns for your environment:
 
 ### 4.11 Deny — MCP Actions: Preventing Impersonation Messages
 
-Prevent Claude Code from sending messages on your behalf.
+Prevent Claude Code from sending messages on your behalf (impersonation).
+An AI assistant reading messages for context is different from it **sending** messages — the latter should require your explicit action.
 
 ```json
 "mcp__claude_ai_Slack__slack_send_message",
 "mcp__claude_ai_Slack__slack_schedule_message"
 ```
 
-An AI assistant reading messages for context is different from it **sending** messages — the latter should require your explicit action.
-
 ### 4.12 Ask — Human-in-the-Loop
 
-Not everything is black or white. Some commands are useful and legitimate, but carry enough risk that **a human should review each invocation**. That's what `ask` is for.
+It's hard to make everything black or white.
+For useful, legitimate commands where **a human should still review each invocation**, use `ask`.
 
-When you approve a command with "Yes, don't ask again", it becomes permanently allowed for that project. `ask` rules override this — Claude Code will **always** prompt you, even if you previously said "don't ask again". This is your Human-in-the-Loop (HITL) checkpoint.
+When you approve a command with "Yes, don't ask again", it becomes permanently allowed for that project. `ask` rules override this — Claude Code will **always** prompt you, even if you previously said "don't ask again". This is one way to implement the Human-in-the-Loop (HITL) approach.
 
 ```json
 {
@@ -296,40 +300,56 @@ When you approve a command with "Yes, don't ask again", it becomes permanently a
 
 | Rule | Why `ask`, not `allow` or `deny` |
 |------|----------------------------------|
-| `git commit` | You want to review the commit message and what's being committed. |
-| `git push` | Useful, but you should verify the branch and remote each time. |
-| `npm/pip/brew install` | Adding dependencies can introduce vulnerabilities. Worth a glance. |
-| `psql / mysql / mongosh / sqlite3` | Can't distinguish `SELECT` from `DROP TABLE` via patterns. The prompt is your only chance to check. |
-
-> **The key insight:** `deny` is for things that should **never** happen. `allow` is for things you **always** trust. `ask` is for things you **usually** trust but want to verify — because the one time you don't check might be the time it matters.
+| `git commit` | You want to review the commit message and what's being committed each time. |
+| `git push` | Branch and remote operations should be verified each time. |
+| `npm/pip/brew install` | Adding dependencies carries the risk of introducing vulnerabilities. Keep a review checkpoint. |
+| `psql / mysql / mongosh / sqlite3` | Note that pattern matching can't distinguish `SELECT` from `DROP TABLE`! |
 
 #### A note on database commands
 
-Commands like `psql`, `mysql`, `mongosh`, and `sqlite3` can be destructive (`DROP TABLE`, `DELETE FROM`), but Claude Code's deny rules match the command itself — not its arguments. Denying `Bash(psql *)` blocks all usage, including harmless `SELECT` queries needed for analysis.
+Commands like `psql`, `mysql`, `mongosh`, and `sqlite3` can be destructive (`DROP TABLE`, `DELETE FROM`), but Claude Code's deny rules can't distinguish the content of command arguments. Denying `Bash(psql *)` blocks all usage, including harmless `SELECT` queries needed for analysis.
 
-**Recommendation:** Use `ask` for database commands rather than `deny`. Review each invocation when prompted — it's the only way to distinguish a read query from a destructive one.
+**Recommendation:** Use `ask` for database commands rather than `deny`.
+When the prompt appears, you can distinguish read queries from destructive operations.
 
 ### 4.13 Allow — Trusted Operations
 
-Allow rules skip the permission prompt for commands you trust. Useful for reducing prompt fatigue on safe, frequently-used operations.
+Allow rules skip the permission prompt for commands you trust.
+Useful for reducing prompt fatigue on safe, frequently-used operations.
 
-See the commented-out `allow` section in [`settings_example.jsonc`](settings_example.jsonc) for examples including test/build commands, safe git operations, and MCP read-only actions.
+For example, test/build commands, safe git operations, MCP read-only actions, etc.
+
+We've included samples, so see the commented-out `allow` section in [`settings_example.jsonc`](settings_example.jsonc).
 
 ---
 
 ## 5. Hooks — When Deny Rules Aren't Enough
 
-Deny rules are enforced by the Claude Code harness (not the AI model), so Claude cannot "choose" to ignore them. However, **deny rules alone have gaps**.
+Deny rules are enforced by the Claude Code harness (not the AI model), so Claude cannot "choose" to ignore them.
+However, for operations like database commands or access to sensitive information, deny's pattern matching isn't sufficient to distinguish what command will actually be executed.
 
-Hooks are custom shell scripts that Claude Code runs at specific lifecycle points — most importantly, **before a tool call is executed** (`PreToolUse`). Unlike deny rules that can only match command patterns, a hook script receives the full command as JSON input and can apply arbitrary logic: inspect arguments, check file contents, query external systems, or block the call with a reason that Claude sees as feedback.
+Deny rules use glob pattern matching, which has inherent limitations:
 
-If the hook exits with code 2, the tool call is blocked (the reason you write to stderr is shown to Claude as feedback). If it exits with 0, the call proceeds. This gives you fine-grained control that glob patterns cannot express.
+Examples:
+- `Bash(sudo *)` blocks `sudo rm -rf /` but not a script that internally calls `sudo`
+- `Bash(curl *|*sh)` blocks `curl url | sh` but not `wget -O- url | bash`
+- `Bash(rm -rf *)` blocks `rm -rf /tmp` but not a Makefile target that runs `rm -rf` internally
 
-### Example 1: Block destructive SQL in database commands
+This is where **Hooks** come in — custom shell scripts that run at specific points in Claude Code's lifecycle. The most important is **before a tool call is executed** (`PreToolUse`). Unlike deny rules that can only match command patterns, a hook script receives the full command as JSON input and can apply arbitrary logic: inspect arguments, check file contents, query external systems, or block the call.
 
-**The problem:** You can't deny `Bash(psql *)` because it blocks `SELECT` too. But you want to catch `DROP TABLE` or `DELETE FROM` before they execute.
+### Detailed explanation
 
-**The hook script** — save as `~/.claude/hooks/block-destructive-sql.sh`:
+From the [official documentation](https://code.claude.com/docs/en/permissions):
+
+> A deny rule for `Read(./.env)` blocks the Read tool but does **not** prevent `cat .env` in Bash.
+
+This means `Read(**/.env)` in your deny list stops Claude's built-in Read tool, but Claude can still run `Bash(cat .env)`, `Bash(grep password .env)`, or any other Bash command that reads the file. The deny rules for Read and Bash are **separate layers that don't cover each other**.
+
+### Use case 1: Block destructive SQL in database commands
+
+**Problem:** Denying `Bash(psql *)` blocks `SELECT` too. But you want to catch `DROP TABLE` or `DELETE FROM` before they execute.
+
+**Hook script** — save as `~/.claude/hooks/block-destructive-sql.sh`:
 
 ```bash
 #!/bin/bash
@@ -349,7 +369,7 @@ exit 0
 chmod +x ~/.claude/hooks/block-destructive-sql.sh
 ```
 
-**The settings** — add to your `settings.json`:
+**Settings** — add to your `settings.json`:
 
 ```json
 {
@@ -369,13 +389,13 @@ chmod +x ~/.claude/hooks/block-destructive-sql.sh
 }
 ```
 
-Now `psql -c "SELECT * FROM users"` proceeds normally, but `psql -c "DROP TABLE users"` is blocked with a reason Claude can see.
+Now `psql -c "SELECT * FROM users"` proceeds normally, but `psql -c "DROP TABLE users"` is blocked with a reason.
 
-### Example 2: Block Bash from reading sensitive files
+### Use case 2: Block Bash from reading sensitive files
 
-**The problem:** `Read(**/.env)` in your deny list blocks Claude's Read tool, but `cat .env` through Bash bypasses it entirely.
+**Problem:** `Read(**/.env)` in your deny list blocks Claude's Read tool, but `cat .env` through Bash bypasses it.
 
-**The hook script** — save as `~/.claude/hooks/block-sensitive-reads.sh`:
+**Hook script** — save as `~/.claude/hooks/block-sensitive-reads.sh`:
 
 ```bash
 #!/bin/bash
@@ -392,7 +412,7 @@ fi
 exit 0
 ```
 
-**The settings** — same structure, same matcher:
+**Settings** — same structure, same matcher:
 
 ```json
 {
@@ -438,127 +458,13 @@ You can register multiple hook scripts under the same event. They all run, and i
 }
 ```
 
-### Why deny rules still have gaps
-
-Even with hooks, it helps to understand why deny rules alone aren't sufficient.
-
-### Read deny ≠ Bash deny
-
-From the [official documentation](https://code.claude.com/docs/en/permissions):
-
-> `Read(./.env)` deny rule blocks the Read tool but does **not** prevent `cat .env` in Bash.
-
-This means `Read(**/.env)` in your deny list stops Claude's built-in Read tool, but Claude can still run `Bash(cat .env)`, `Bash(grep password .env)`, or any other Bash command that reads the file. The deny rules for Read and Bash are **separate layers that don't cover each other**.
-
-### Bash patterns can be bypassed
-
-Bash deny rules use glob pattern matching, which has inherent limitations:
-
-- `Bash(sudo *)` blocks `sudo rm -rf /` but not a script that internally calls `sudo`
-- `Bash(curl *|*sh)` blocks `curl url | sh` but not `wget -O- url | bash`
-- `Bash(rm -rf *)` blocks `rm -rf /tmp` but not a Makefile target that runs `rm -rf` internally
-
-### Three layers of defense
-
-For robust protection, use all three layers together:
-
-| Layer | What it does | Configured in |
-|-------|-------------|---------------|
-| **Deny rules** | First line of defense. Blocks known dangerous commands and tools before execution. | `settings.json` |
-| **Sandbox** | OS-level enforcement. Restricts filesystem and network access for all processes, including child processes spawned by Bash. Cannot be bypassed by the AI model. | `settings.json` |
-| **Hooks (PreToolUse)** | Custom scripts that inspect commands before execution. Can apply complex logic that glob patterns cannot express. | `settings.json` |
-
-Deny rules catch the obvious cases. Sandbox prevents damage even if a command slips through. Hooks let you add custom logic for your specific environment.
-
-For more on hooks, see [Claude Code Hooks Guide](https://code.claude.com/docs/en/hooks-guide).
-
 ---
 
-## 6. Logging Denied Operations
+## 6. How to Keep Denial Logs?
 
-Deny rule blocks are visible in the session UI, but are not logged to a file by default. To maintain an audit trail of what was blocked and when, you have two options.
+Blocked operations from deny rules are shown during the session but are not logged to a file by default.
 
-### Option 1: Log tool calls with a Hook
-
-The simplest approach — no external services required. Use a PreToolUse Hook to write every tool call to a local log file.
-
-**Important limitation:** Hooks only see tool calls that **reach** the hook. Calls blocked by deny rules are rejected before hooks run, so **deny-rule blocks cannot be captured this way**. For that, you need Option 2.
-
-**Hook script** — save as `~/.claude/hooks/log-tool-calls.sh`:
-
-```bash
-#!/bin/bash
-INPUT=$(cat)
-TOOL=$(echo "$INPUT" | jq -r '.tool_name')
-CMD=$(echo "$INPUT" | jq -r '.tool_input.command // .tool_input.file_path // "N/A"')
-TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-SESSION_ID="${CLAUDE_SESSION_ID:-unknown}"
-
-echo "${TIMESTAMP} session=${SESSION_ID} tool=${TOOL} command=${CMD}" >> ~/.claude/tool-calls.log
-
-exit 0
-```
-
-```bash
-chmod +x ~/.claude/hooks/log-tool-calls.sh
-```
-
-**Configuration:**
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/log-tool-calls.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Setting `matcher` to an empty string matches all tool calls.
-
-### Option 2: Collect telemetry with OpenTelemetry
-
-For a complete audit trail — including deny-rule blocks — configure OpenTelemetry (OTel). Claude Code exports span events for every tool call decision.
-
-**Recorded event:**
-
-| Event name | Content |
-|-----------|---------|
-| `claude_code.tool_decision` | Accept/reject decision for each tool call, along with the decision source (deny rule, user rejection, etc.) |
-
-**Setup:**
-
-1. Prepare an OTel Collector or backend (Jaeger, Honeycomb, Datadog, etc.)
-2. Set the endpoint via environment variable:
-
-```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
-```
-
-3. Launch Claude Code — telemetry data will be exported automatically
-
-See [Monitoring Usage](https://code.claude.com/docs/en/monitoring-usage) for details.
-
-### Which to choose
-
-| Consideration | Hook log | OpenTelemetry |
-|--------------|----------|---------------|
-| Records deny-rule blocks | **No** (hooks are not reached) | Yes |
-| Records allowed calls | Yes | Yes |
-| Setup effort | Single file | Requires OTel backend |
-| Structured / searchable | Low (text log) | High (spans/events) |
-| Team / org audit | Individual use | Well suited |
-
-Use **Hook logging** if you just want visibility into what tool calls are being made during development. Use **OpenTelemetry** if you need a complete audit trail including deny-rule blocks.
+To keep an audit trail of denied operations, you can set up OpenTelemetry. See https://code.claude.com/docs/en/monitoring-usage for details.
 
 ---
 
@@ -571,10 +477,6 @@ Use **Hook logging** if you just want visibility into what tool calls are being 
 - [Claude Code Permissions](https://code.claude.com/docs/en/permissions)
 - [Claude Code Sandboxing](https://code.claude.com/docs/en/sandboxing)
 - [Claude Code Hooks Guide](https://code.claude.com/docs/en/hooks-guide)
-
-### Community
-
-- [Claude Codeの設定でやるべきセキュリティ対策](https://qiita.com/dai_chi/items/f6d5e907b9fee791b658) (Japanese)
 
 ## Related Cheat Sheets & Further Reading
 
