@@ -1,6 +1,6 @@
 # claude-code-hardening-cheatsheet
 
-**[日本語版はこちら (Japanese)](README.ja.md)**
+**[日本語版(Japanese)](README.ja.md)**
 
 A security hardening cheatsheet for [Claude Code](https://code.claude.com/) `~/.claude/settings.json`.
 
@@ -10,10 +10,7 @@ This cheatsheet is primarily written and tested on macOS, but most rules apply e
 
 ## Cheatsheet
 
-Read the full cheatsheet for detailed explanations of each rule:
-
 - [Claude Code Hardening Cheatsheet (English)](Claude_Code_Hardening_Cheat_Sheet.md)
-- [Claude Code Hardening Cheatsheet (日本語)](Claude_Code_Hardening_Cheat_Sheet.ja.md)
 
 ## Files
 
