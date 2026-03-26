@@ -2,6 +2,11 @@
 // Customize and copy to ~/.claude/settings.json (remove comments)
 // See Claude_Code_Hardening_Cheat_Sheet.md for the rationale behind each rule.
 // Sandbox: macOS (Seatbelt), Linux/WSL2 (bubblewrap). WSL1 not supported.
+//
+// Design principle: Sandbox first, permissions as complement.
+// The sandbox (Layer 1) does the heavy lifting at the OS level.
+// Deny rules below are either "Essential" (sandbox can't prevent)
+// or "Defense in depth" (sandbox is primary, deny adds a second layer).
 {
   "sandbox": {
     "enabled": true,
@@ -55,8 +60,10 @@
     // ],
 
     // ── deny: always block, regardless of context ──
+    // Rules tagged [Essential] address threats sandbox can't prevent.
+    // Rules tagged [Defense in depth] add a second layer where sandbox is primary.
     "deny": [
-      // Destructive git operations
+      // [Essential] Destructive git operations — sandbox allows CWD access
       "Bash(git push -f *)",
       "Bash(git push --force *)",
       "Bash(git reset --hard *)",
@@ -65,42 +72,42 @@
       "Bash(git add .)",
       "Bash(git add -A)",
 
-      // Destructive file operations
+      // [Defense in depth] Destructive file operations — sandbox limits scope
       "Bash(rm -rf *)",
       "Bash(rm -r *)",
 
-      // Dangerous system operations
+      // [Defense in depth] Dangerous system operations — sandbox limits scope
       "Bash(chmod 777 *)",
       "Bash(chmod -R *)",
       "Bash(chown -R *)",
       "Bash(killall *)",
       "Bash(pkill *)",
       "Bash(kill -9 *)",
-      // Privilege escalation
+      // [Defense in depth] Privilege escalation — sandbox constrains scope
       "Bash(sudo *)",
       "Bash(su *)",
 
-      // Remote code execution via pipe
+      // [Defense in depth] Remote code execution via pipe — sandbox blocks network
       "Bash(curl *|*sh)",
       "Bash(wget *|*sh)",
 
-      // macOS only — remove these if you're on Linux/Windows
+      // [Essential] macOS only — remove these if you're on Linux/Windows
       "Bash(open *)",
       "Bash(osascript *)",
       "Bash(defaults write *)",
 
-      // Remote access
+      // [Defense in depth] Remote access — sandbox blocks network
       "Bash(ssh *)",
       "Bash(scp *)",
       "Bash(rsync *)",
 
-      // Package publishing & deployment
+      // [Essential] Package publishing & deployment — sandbox can't prevent if network enabled
       "Bash(npm publish *)",
       "Bash(yarn publish *)",
       "Bash(pnpm publish *)",
       "Bash(*deploy*)",
 
-      // Infrastructure
+      // [Essential] Infrastructure — sandbox partially covers, but credentials may be accessible
       "Bash(terraform apply *)",
       "Bash(terraform destroy *)",
       "Bash(kubectl apply *)",
@@ -111,11 +118,11 @@
       "Bash(aws * --no-cli-pager)",
       "Bash(gcloud * --quiet)",
 
-      // Sensitive file access
+      // [Defense in depth] Sensitive file access — sandbox limits filesystem scope
       "Read(**/.env)",
       "Read(**/.env.*)",
 
-      // MCP actions (sending)
+      // [Essential] MCP actions (sending) — sandbox can't prevent MCP tool calls
       "mcp__claude_ai_Slack__slack_send_message",
       "mcp__claude_ai_Slack__slack_schedule_message"
     ]

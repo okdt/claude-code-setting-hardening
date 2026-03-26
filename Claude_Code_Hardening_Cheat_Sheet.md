@@ -14,16 +14,21 @@ Claude Code can run shell commands, read and write files, and interact with exte
 - **Compromised environment** — If your machine is affected by RCE, malware, or a supply chain attack, Claude Code inherits that compromise. Hardening limits the blast radius — what an attacker can do *through* Claude Code even after gaining a foothold.
 
 These are not hypothetical. They are the reason guardrails exist: to ensure that when things go wrong — and they will — the damage is contained.
-This cheatsheet provides a practical guide to hardening your Claude Code environment through `~/.claude/settings.json` — applying the principle of least privilege and Human-in-the-Loop (HITL) controls.
+This cheatsheet provides a practical guide to hardening your Claude Code environment through `~/.claude/settings.json` — applying the principle of least privilege and Human-in-the-Loop (HITL) controls, with **sandbox as the primary defense** and permissions/hooks as targeted supplements.
 
-### Approach
+### Approach — Three-Layer Defense Model
 
-1. **Sandboxing** — OS-level process isolation that restricts Claude Code's (and its child processes') file and network access. This operates at the kernel level, so the AI cannot circumvent it. The most fundamental and strongest defense layer.
-2. **Permissions (allow/deny/ask/default)** — Rules that control what happens when a tool (Bash command, file edit, etc.) is invoked from Claude Code's console: "always allow / always ask / always deny / default (not configured)." Permissions provide fine-grained access control per tool invocation. Using `ask` enables Human-in-the-Loop — systematic visual review.
-3. **Hooks (hooks + PreToolUse)** — A mechanism to automatically run shell scripts before and after tool invocations. Lets you inject fine-grained pattern matching and environment-specific custom checks that permissions' allow/deny alone can't handle.
-4. **Logging** — This may be needed in enterprise environments, or for debugging this hardening setup itself. We touch on it briefly.
+The design follows the same layering principle as other coding agents (such as [Codex CLI](https://github.com/okdt/codex-cli-hardening-cheatsheet)): start with the strongest, hardest-to-bypass control and add finer-grained layers only where needed.
 
-> **Key point:** Layering multiple defenses like this is known as **defense in depth**.
+| Layer | Mechanism | What it does | Bypassable by AI? |
+|-------|-----------|-------------|-------------------|
+| **1. Sandbox** | OS-level process isolation | Restricts file and network access at the kernel level. This is the foundation — even if every other layer fails, the sandbox contains the blast radius. | No |
+| **2. Permissions** | allow / deny / ask rules | Controls what happens when a tool is invoked: always allow, always deny, always ask, or default. Adds fine-grained command-level control *on top of* the sandbox. Using `ask` enables Human-in-the-Loop. | No (harness-enforced) |
+| **3. Hooks** | PreToolUse shell scripts | Runs custom logic before tool invocations. Handles cases where glob-based deny rules can't distinguish safe from unsafe (e.g., `SELECT` vs `DROP TABLE`). | No (harness-enforced) |
+
+A fourth layer — **Logging** (OpenTelemetry) — may be needed in enterprise environments or for debugging. We touch on it briefly.
+
+> **Key point:** Layering multiple defenses like this is known as **defense in depth**. The critical insight is that the sandbox should do the heavy lifting. Permissions and hooks are *supplements*, not substitutes.
 
 ### What about CLAUDE.md?
 
@@ -33,9 +38,9 @@ When something should not happen, stop it by force rather than by asking — fig
 
 ### About the examples
 
-Deny rules catch obvious cases. The sandbox prevents damage even when commands slip through. Hooks add environment-specific custom logic.
+The sandbox prevents damage at the OS level — it is the primary defense. Deny rules add a second layer for cases the sandbox can't cover (e.g., destructive git operations within CWD) or as defense in depth for cases it already handles. Hooks add environment-specific custom logic for edge cases.
 
-This document covers what to block, what to allow, what to always ask about, and what to do when deny rules aren't enough. The deny list examples here are samples, not a complete list. They start from the perspective of what risks to suppress. This cheatsheet is primarily written and tested on macOS, but should be useful for Linux and Windows (WSL) as well.
+This document covers what to block, what to allow, what to always ask about, and what to do when deny rules aren't enough. The deny list examples here are samples, not a complete list. Each rule is tagged as **Essential** (sandbox can't prevent it) or **Defense in depth** (sandbox is the primary defense). This cheatsheet is primarily written and tested on macOS, but should be useful for Linux and Windows (WSL) as well.
 
 Customize for your own environment and risk profile.
 
@@ -73,6 +78,24 @@ Supported on macOS (Seatbelt), Linux, and WSL2 (bubblewrap). WSL1 is not support
 
 > **Key point:** Designing defenses that minimize the scope of impact is known as the **principle of least privilege**.
 
+### What the sandbox covers — and what it doesn't
+
+Understanding what the sandbox *can* and *cannot* prevent is essential for deciding where to invest in deny rules and hooks. If the sandbox already blocks a threat at the OS level, a deny rule for the same threat is defense in depth — nice to have, but not your primary defense. Focus your energy on threats the sandbox *cannot* catch.
+
+| Threat | Sandbox prevents? | Why / Why not |
+|--------|:-----------------:|---------------|
+| File access outside CWD (`rm -rf /`, reading `~/.ssh`) | **Yes** | Filesystem restricted to CWD and allowed paths |
+| Network access (`ssh`, `curl`, `wget`) | **Yes** | Network blocked at OS level when sandbox is enabled |
+| Destructive git operations (`push -f`, `reset --hard`) | **No** | Git operates on `.git/` inside CWD — the sandbox allows this |
+| Broad staging (`git add .`, `git add -A`) | **No** | Operates within CWD |
+| Package publishing (`npm publish`) | **Partially** | Blocked if network is off; but if network is enabled (e.g., for `npm install`), publish goes through |
+| Infrastructure commands (`terraform apply`, `kubectl`) | **Partially** | Depends on whether credentials and config are within accessible paths |
+| MCP actions (Slack send, calendar write) | **No** | MCP tools go through Claude's tool system, not through OS-level network |
+| macOS-specific (`open`, `osascript`) | **No** | These launch processes outside the sandbox boundary |
+| Database commands (`psql`, `mysql`) | **Partially** | Depends on whether the DB socket/port is accessible; sandbox can't distinguish `SELECT` from `DROP TABLE` |
+
+**Practical takeaway:** Deny rules in sections 4.1 (destructive git), 4.7 (publishing/deployment), 4.8 (macOS), 4.9 (infrastructure), and 4.11 (MCP) are **essential** — the sandbox alone cannot prevent these threats. Other deny rules (4.2 file operations, 4.3 system operations, 4.5 remote code execution, 4.6 remote access) are **defense in depth** — the sandbox is your primary defense, and deny rules add a second layer.
+
 ---
 
 ## 3. Permission System
@@ -108,7 +131,9 @@ This section lists specific rules organized by threat category. Each rule includ
 
 See [`settings_example.jsonc`](settings_example.jsonc) for a single file containing all rules below, with `allow` and `ask` examples and commentary in comments. Note that comments will cause JSON errors if left in place.
 
-### 4.1 Deny — Destructive Git Operations
+> **How to read this section:** Rules marked **Essential** address threats the sandbox cannot prevent — these are your priority. Rules marked **Defense in depth** address threats the sandbox already blocks at the OS level; the deny rule adds a second layer but is not your only line of defense. If you're starting from scratch, implement the Essential rules first.
+
+### 4.1 Deny — Destructive Git Operations <sup>Essential</sup>
 
 Prevent irreversible changes to your repository and its history.
 
@@ -130,7 +155,7 @@ Prevent irreversible changes to your repository and its history.
 | `git clean -f` | Deletes untracked files permanently. |
 | `git add . / -A` | Stages everything — may accidentally include `.env`, credentials, or large binaries. |
 
-### 4.2 Deny — Destructive File Operations
+### 4.2 Deny — Destructive File Operations <sup>Defense in depth</sup>
 
 Prevent bulk file deletion that could wipe out project trees.
 
@@ -144,7 +169,7 @@ Prevent bulk file deletion that could wipe out project trees.
 | `rm -rf` | Recursively deletes directories without confirmation. A wrong path can wipe out entire project trees. |
 | `rm -r` | Same as above, but prompts in some configurations. Still too dangerous to allow unconditionally. |
 
-### 4.3 Deny — Dangerous System Operations
+### 4.3 Deny — Dangerous System Operations <sup>Defense in depth</sup>
 
 Prevent permission changes and process kills that could destabilize your environment.
 
@@ -164,7 +189,7 @@ Prevent permission changes and process kills that could destabilize your environ
 | `killall / pkill` | Terminates processes by name. Can kill unrelated critical processes. |
 | `kill -9` | Force-kills without cleanup. Can cause data corruption in running applications. |
 
-### 4.4 Deny — Privilege Escalation
+### 4.4 Deny — Privilege Escalation <sup>Defense in depth</sup>
 
 Prevent Claude Code from running commands as root.
 
@@ -175,7 +200,7 @@ Prevent Claude Code from running commands as root.
 
 An AI assistant should never escalate privileges. `sudo` requires a password, but it's more reliable to deny the attempt itself.
 
-### 4.5 Deny — Remote Code Execution via Pipe
+### 4.5 Deny — Remote Code Execution via Pipe <sup>Defense in depth</sup>
 
 Prevent downloading and executing untrusted scripts in one step. These rules do not affect web page access.
 
@@ -186,10 +211,10 @@ Prevent downloading and executing untrusted scripts in one step. These rules do 
 
 Piping remote scripts directly into a shell (`curl ... | sh`) is a classic supply chain attack vector. Claude Code may suggest this as a standard "install" step — and users tend to approve it reflexively because it *looks like* a normal installation procedure. Better to let Claude Code tell you the command and run it yourself.
 
-### 4.6 Deny — Remote Access
+### 4.6 Deny — Remote Access <sup>Defense in depth</sup>
 
 Prevent Claude Code from initiating connections to remote hosts. An AI assistant should not initiate remote connections. These commands can transfer files or execute commands on remote hosts.
-When sandbox mode is enabled, network access is blocked at the OS level, but Claude Code can still attempt to execute these commands — that's why they're listed here.
+When sandbox mode is enabled, network access is blocked at the OS level — the sandbox is your primary defense here. These deny rules serve as a second layer in case the sandbox is misconfigured or temporarily disabled.
 
 ```json
 "Bash(ssh *)",
@@ -199,7 +224,7 @@ When sandbox mode is enabled, network access is blocked at the OS level, but Cla
 
 If you need remote access, consider allowing specific targets instead of a blanket allow.
 
-### 4.7 Deny — Package Publishing & Deployment
+### 4.7 Deny — Package Publishing & Deployment <sup>Essential</sup>
 
 Prevent unintended package publishing and deployment, even in CI/CD contexts.
 Publishing packages or triggering deployments should be a deliberate human action. Unless explicitly designed into your workflow, an AI should not do this autonomously.
@@ -211,7 +236,7 @@ Publishing packages or triggering deployments should be a deliberate human actio
 "Bash(*deploy*)"
 ```
 
-### 4.8 Deny — Easy to Approve, Hard to Undo (macOS)
+### 4.8 Deny — Easy to Approve, Hard to Undo (macOS) <sup>Essential</sup>
 
 Some macOS commands look harmless but can cause serious damage. Users tend to approve these without a second thought — that's exactly what makes them risky.
 
@@ -229,7 +254,7 @@ Some macOS commands look harmless but can cause serious damage. Users tend to ap
 
 * These rules are not needed on other operating systems, but consider the same approach for your platform's equivalents (contributions welcome).
 
-### 4.9 Deny — Infrastructure
+### 4.9 Deny — Infrastructure <sup>Essential</sup>
 
 Prevent autonomous changes to cloud infrastructure.
 
@@ -254,7 +279,7 @@ Prevent autonomous changes to cloud infrastructure.
 | `aws --no-cli-pager` | Runs AWS CLI without paging — easy to miss destructive output. |
 | `gcloud --quiet` | Runs GCP CLI without confirmation prompts. |
 
-### 4.10 Deny — Sensitive File Access
+### 4.10 Deny — Sensitive File Access <sup>Defense in depth</sup>
 
 Prevent Claude Code from reading files that contain secrets.
 
@@ -273,7 +298,7 @@ Consider adding more patterns for your environment:
 "Read(**/credentials*)"
 ```
 
-### 4.11 Deny — MCP Actions: Preventing Impersonation Messages
+### 4.11 Deny — MCP Actions: Preventing Impersonation Messages <sup>Essential</sup>
 
 Prevent Claude Code from sending messages on your behalf (impersonation).
 An AI assistant reading messages for context is different from it **sending** messages — the latter should require your explicit action.
