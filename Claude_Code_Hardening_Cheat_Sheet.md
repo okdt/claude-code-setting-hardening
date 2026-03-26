@@ -23,6 +23,14 @@ This cheatsheet provides a practical guide to hardening your Claude Code environ
 3. **Hooks (hooks + PreToolUse)** — A mechanism to automatically run shell scripts before and after tool invocations. Lets you inject fine-grained pattern matching and environment-specific custom checks that permissions' allow/deny alone can't handle.
 4. **Logging** — This may be needed in enterprise environments, or for debugging this hardening setup itself. We touch on it briefly.
 
+> **Key point:** Layering multiple defenses like this is known as **defense in depth**.
+
+### What about CLAUDE.md?
+
+`CLAUDE.md` (at the project root or `~/.claude/CLAUDE.md`) is meant for recording the purpose, context, and outline of your environment and work. While listing permission policies like "don't push directly to main" or "don't commit until tests pass" isn't entirely meaningless, CLAUDE.md has a limited capacity (around 200 lines is recommended), and while it's fine for context, it's not well suited as a place for deny policies. On top of that, even if you do write them there, they're merely "requests" at best — and they're often forgotten.
+
+When something should not happen, stop it by force rather than by asking — figuring out how to do that is the starting point of this document.
+
 ### About the examples
 
 Deny rules catch obvious cases. The sandbox prevents damage even when commands slip through. Hooks add environment-specific custom logic.
@@ -62,6 +70,8 @@ Supported on macOS (Seatbelt), Linux, and WSL2 (bubblewrap). WSL1 is not support
 | `enabled: true` | Isolates file and network access at the OS level. Claude Code can only access the current working directory and explicitly allowed paths. |
 | `autoAllowBashIfSandboxed` | Reduces permission prompts for Bash commands — safe because the sandbox constrains their scope. |
 | `denyRead` | This is a bonus / customization section. Blocks access to credential stores even within the sandbox. In this example, SSH keys, GPG keys, AWS credentials, and GCP configs are configured so the AI assistant cannot read them directly. (However... this can be bypassed if the path is passed as an argument to a Bash command like `cat`, so the implementation is admittedly imperfect.) |
+
+> **Key point:** Designing defenses that minimize the scope of impact is known as the **principle of least privilege**.
 
 ---
 
@@ -432,6 +442,67 @@ exit 0
 }
 ```
 
+### Use case 3: Block push to main/master branch
+
+**Problem:** `git push` is useful so you've set it to `ask`, but an accidental approval can push directly to main. The deny rule `Bash(git push *)` can't distinguish branches.
+
+**Hook script** — save as `~/.claude/hooks/block-push-to-main.sh`:
+
+```bash
+#!/bin/bash
+INPUT=$(cat)
+CMD=$(echo "$INPUT" | jq -r '.tool_input.command')
+
+# Skip if not a git push command
+echo "$CMD" | grep -qE '^\s*git\s+push' || exit 0
+
+# Explicit main/master in the command
+if echo "$CMD" | grep -qE '\b(main|master)\b'; then
+  echo "Blocked: push to main/master is not allowed: $CMD" >&2
+  exit 2
+fi
+
+# Implicit push (no args or remote only) — check current branch
+if echo "$CMD" | grep -qE '^\s*git\s+push\s*$' || \
+   echo "$CMD" | grep -qE '^\s*git\s+push\s+(-[a-zA-Z]+\s+)*[a-zA-Z0-9_.-]+\s*$'; then
+  CURRENT=$(git branch --show-current 2>/dev/null)
+  if [ "$CURRENT" = "main" ] || [ "$CURRENT" = "master" ]; then
+    echo "Blocked: currently on $CURRENT — push to main/master is not allowed" >&2
+    exit 2
+  fi
+fi
+
+exit 0
+```
+
+```bash
+chmod +x ~/.claude/hooks/block-push-to-main.sh
+```
+
+**Settings** — add to your `settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/block-push-to-main.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+This blocks `git push origin main` and bare `git push` when on the main branch. Pushes to feature branches go through normally.
+
+> **Note:** This will also match branch names that contain "main" or "master" as a substring, such as `feature/main-cleanup`. Adjust the pattern if needed.
+
 ### Combining multiple hooks
 
 You can register multiple hook scripts under the same event. They all run, and if any one exits with code 2, the call is blocked:
@@ -450,6 +521,10 @@ You can register multiple hook scripts under the same event. They all run, and i
           {
             "type": "command",
             "command": "~/.claude/hooks/block-sensitive-reads.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/block-push-to-main.sh"
           }
         ]
       }
